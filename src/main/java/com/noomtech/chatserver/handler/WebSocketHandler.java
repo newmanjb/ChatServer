@@ -1,20 +1,16 @@
 package com.noomtech.chatserver.handler;
 
-import com.noomtech.chatserver.model.ServerData;
-import com.noomtech.chatserver.model.contact.Contact;
-import com.noomtech.chatserver.model.contact.ContactDetails;
-import com.noomtech.chatserver.model.conversation.Conversation;
-import com.noomtech.chatserver.model.conversation.ConversationDetails;
-import com.noomtech.chatserver.model.conversation.Message;
+import com.google.gson.Gson;
+import com.noomtech.chatserver.model.inboundonly.*;
+import com.noomtech.chatserver.model.conversation.*;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
-import com.google.gson.Gson;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 
@@ -26,87 +22,158 @@ import java.util.regex.Pattern;
  */
 public class WebSocketHandler extends TextWebSocketHandler {
 
-    //The starting data
-    private static final ServerData INITIAL_DATA;
-    static {
-        var cd1 = new ConversationDetails(new Message[]{new Message("J")}, "J");
-        var cd2 = new ConversationDetails(new Message[]{new Message("B")}, "B");
-        var cd3 = new ConversationDetails(new Message[]{new Message("C")}, "C");
-        var cd4 = new ConversationDetails(new Message[]{new Message("A")}, "A");
-        var conversation1 = new Conversation(0L, cd1);
-        var conversation2 = new Conversation(1L, cd2);
-        var conversation3 = new Conversation(2L, cd3);
-        var conversation4 = new Conversation(3L, cd4);
-        var conversations = new Conversation[]{conversation1, conversation2, conversation3, conversation4};
 
 
-        var c1 = new ContactDetails("Joshua", "Newman");
-        var c2 = new ContactDetails("Bill", "Plums");
-        var c3 = new ContactDetails("Clementine", "Flapcock");
-        var c4 = new ContactDetails("Audrey", "Scrollard");
-        var contact1 = new Contact(0L, c1);
-        var contact2 = new Contact(1L, c2);
-        var contact3 = new Contact(2L, c3);
-        var contact4 = new Contact(3L, c4);
-        var contacts = new Contact[]{contact1, contact2, contact3, contact4};
-
-        INITIAL_DATA = new ServerData(contacts, conversations);
-    }
-
-    private static final Set<WebSocketSession> sessions = new HashSet<>();
     private static final String REPLACE_ESCAPED_QUOTES = Pattern.quote("\\\"");
+    private static final String QUOTE = "\"";
+    private static final String COLON = ":";
+
+    private static final Map<Long, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private static final Gson GSON = new Gson();
+
+    private enum CONVERSATION_UPDATE_TYPES {
+
+        NEW(0),
+        MESSAGE_POSTED(1),
+        PARTICIPANT_LEFT_CONVERSATION(2),
+        CONVERSATION_ENDED_USER_LEFT(3);
+
+        private final int code;
+        CONVERSATION_UPDATE_TYPES(int code) {
+            this.code = code;
+        }
+
+        public int getCode() {
+            return code;
+        }
+    }
 
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        sessions.add(session);
+        System.out.println("Session: " + session + " established");
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
 
-        //Inbound messages are in the format of "type=... payload=..." where the 'payload' value is the JSON object
+        if (session.isOpen()) {
+            //Inbound messages are in the format of "{type: from: payload:}" where "from" is the contact id of the sender, and 'payload' value is the JSON object e.g.
+            // "{"type":"LoginRequest","from":"50","payload":{}"
+            var messageString = message.getPayload();
+            System.out.println("Received: " + messageString);
+            //Get the type, who it's from, and the payload
+            int firstQuoteIndex = messageString.indexOf("\"");
+            int secondQuoteIndex = messageString.substring(firstQuoteIndex + 1).indexOf(QUOTE);
+            var type = messageString.substring(firstQuoteIndex + 1, secondQuoteIndex);
+            int thirdQuoteIndex = messageString.substring(secondQuoteIndex + 1).indexOf(QUOTE);
+            int fourthQuoteIndex = messageString.substring(thirdQuoteIndex + 1).indexOf(QUOTE);
+            var fromString = messageString.substring(thirdQuoteIndex + 1, fourthQuoteIndex);
+            var from = Long.parseLong(fromString);
+            int colonIndexBeforePayload = messageString.substring(fourthQuoteIndex + 1).indexOf(COLON);
+            final String payloadString = messageString.substring(colonIndexBeforePayload + 1, messageString.length() - 1).replaceAll(REPLACE_ESCAPED_QUOTES, QUOTE);
 
-        for (WebSocketSession webSocketSession : sessions) {
-            if (webSocketSession.isOpen()) {
-                try {
+            if(!type.equals("LoginRequest")) {
 
-                    var messageString = message.getPayload();
-                    System.out.println("Received: " + messageString);
-                    //Get the type and the payload
-                    int firstSpaceIndex = messageString.indexOf(" ");
-                    var type = messageString.substring(6, firstSpaceIndex);
-                    String payloadString = messageString.substring(firstSpaceIndex + 1);
-                    payloadString = payloadString.substring(0, payloadString.length() - 1);
+                if(!sessions.containsKey(from)) {
+                    System.out.println("Session " + session.getUri() + " for user: " + fromString + " has not logged in");
+                }
+                else {
 
                     switch (type) {
-                        case "RequestFullSnapshot": {
-                            send(session, new TextMessage("{\"type\" : \"FullSnapshot\", \"data\" : " + GSON.toJson(INITIAL_DATA) + "}"));
+                        case "FullSnapshotRequest": {
+                            //@todo - build the Conversations object from the db and send it
                             break;
                         }
-                        case "ConversationUpdate": {
-                            payloadString = payloadString.replaceAll(REPLACE_ESCAPED_QUOTES, "\"");
-                            Conversation conversation = GSON.fromJson(payloadString, Conversation.class);
-                            send(session, new TextMessage("{\"type\":\"ConversationUpdate\", \"conversation\":" + GSON.toJson(conversation) + "}"));
+                        case "NewConversationRequest": {
+                            var conversationRequestObject = convertToObject(payloadString, NewConversationRequest.class);
+                            //@todo - generate conversation Id from db (different DB object?), find participant details from search term, add new conversation to db
+                            var participantIds = new Long[0];
+                            var newConversation = new Conversation(1l, new ConversationParticipant[]{new ConversationParticipant("Simon", "Balls", 4L)}, new Message[]{}, "");
+                            sendToUsers(new TextMessage("{\"type\":\"ConversationUpdate\", \"updateType\":\"" + CONVERSATION_UPDATE_TYPES.NEW +
+                                    "\", \"conversation\":" + GSON.toJson(newConversation) + "}"), participantIds);
+
+                        }
+                        case "UserPostedInConversationNotification": {
+                            var userPostedObject = convertToObject(payloadString, UserPostedInConversationNotification.class);
+                            var newMessage = new Message(userPostedObject.getText(), userPostedObject.getWhen(), userPostedObject.getConversationId());
+                            //@todo update db
+                            //@todo - Look up participants in conversation and get a list of ids back
+                            var participants = new Long[0];
+                            sendToUsers(new TextMessage("{\"type\":\"ConversationUpdate\", \"updateType\":\"" + CONVERSATION_UPDATE_TYPES.MESSAGE_POSTED +
+                                    "\", \"conversation\":" + GSON.toJson(newMessage) + "}"), participants);
                             break;
+                        }
+                        case "UserLeftConversationNotification": {
+                            var userLeftConversationObject = convertToObject(payloadString, UserLeftConversationNotification.class);
+                            //@todo - update db, get list of participants
+                            boolean conversationEnded = false;
+                            var userWhoLeft = userLeftConversationObject.getUserId();
+                            var participants = new Long[0];
+                            if(conversationEnded) {
+                                sendToUsers(new TextMessage("{\"type\":\"ConversationUpdate\", \"updateType\":\"" + CONVERSATION_UPDATE_TYPES.CONVERSATION_ENDED_USER_LEFT +
+                                        "\",\"user\":\"" + userWhoLeft + "\"}"), participants);
+                            }
+                            else {
+                                sendToUsers(new TextMessage("{\"type\":\"ConversationUpdate\", \"updateType\":\"" + CONVERSATION_UPDATE_TYPES.PARTICIPANT_LEFT_CONVERSATION +
+                                        "\",\"user\":\"" + userWhoLeft + "\"}"), participants);
+                            }
+                        }
+                        case "Logout": {
+                            var logoutRequest = convertToObject(payloadString, LogoutRequest.class);
+                            System.out.println("Logging out user: " + logoutRequest);
+                            var loggedOutSession = sessions.remove(logoutRequest.getUserId());
+                            if(loggedOutSession == null) {
+                                System.out.println("ERROR: user was never logged in!");
+                            }
+                            else {
+                                loggedOutSession.close();
+                            }
                         }
                         default: {
                             System.out.println("Unknown message type: " + type);
                         }
                     }
-                } catch (IOException e) {
-                    e.printStackTrace();
                 }
-            } else {
-                System.out.println("Websocket not open");
             }
+            else {
+                LoginRequest loginRequest = convertToObject(payloadString, LoginRequest.class);
+                //@todo - do username and pwd checks
+                long userId = -1L;
+                var userName = "simon";
+                if(userId > -1) {
+                    System.out.println("User " + userName + " logged in successfully");
+                    sessions.put(userId, session);
+                }
+                else {
+                    System.out.println("User " + userName + " failed login");
+                }
+                send(session, new TextMessage("{\"userId\":\"" + userId + "\"}"));
+            }
+        } else {
+            System.out.println("Websocket not open on session: " + session.getUri());
+        }
 
+
+    }
+
+    private static <R> R convertToObject(String json, Class<R> cl) {
+        return GSON.fromJson(json, cl);
+    }
+
+    private void send(WebSocketSession session, TextMessage msg) {
+        System.out.println("Sending: " + msg.getPayload());
+        try {
+            session.sendMessage(msg);
+        }
+        catch(IOException e) {
+            e.printStackTrace();
         }
     }
 
-    private void send(WebSocketSession session, TextMessage msg) throws IOException {
-        System.out.println("Sending: " + msg.getPayload());
-        session.sendMessage(msg);
+    private void sendToUsers(TextMessage message, Long[] userIds) {
+        for(Long userId : userIds) {
+            Optional.ofNullable(sessions.get(userId)).ifPresent(session -> {send(session, message);});
+        }
     }
 }
