@@ -1,14 +1,7 @@
 package com.noomtech.chatserver.model.inboundonly;
 
-public class LogoutRequest {
+import java.util.UUID;
 
-    private final long userId;
+public record LogoutRequest(UUID userId) {
 
-    public LogoutRequest(long userId) {
-        this.userId = userId;
-    }
-
-    public long getUserId() {
-        return userId;
-    }
 }

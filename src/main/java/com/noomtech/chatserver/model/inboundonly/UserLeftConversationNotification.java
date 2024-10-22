@@ -1,21 +1,7 @@
 package com.noomtech.chatserver.model.inboundonly;
 
-public class UserLeftConversationNotification {
+import java.util.UUID;
 
-    private final Long userId;
-    private final Long conversationId;
+public record UserLeftConversationNotification(UUID participantId) {
 
-
-    public UserLeftConversationNotification(Long userId, Long conversationId) {
-        this.userId = userId;
-        this.conversationId = conversationId;
-    }
-
-    public Long getUserId() {
-        return userId;
-    }
-
-    public Long getConversationId() {
-        return conversationId;
-    }
 }

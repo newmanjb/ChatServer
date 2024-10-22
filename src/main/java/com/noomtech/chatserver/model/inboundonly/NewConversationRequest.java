@@ -1,21 +1,6 @@
 package com.noomtech.chatserver.model.inboundonly;
 
-public class NewConversationRequest {
+public record NewConversationRequest(String name, String[] firstNames, String[] lastNames) {
 
 
-    private final String name;
-    private final String[] participants;
-
-    public NewConversationRequest(String name, String[] participants) {
-        this.name = name;
-        this.participants = participants;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public String[] getParticipants() {
-        return participants;
-    }
 }
