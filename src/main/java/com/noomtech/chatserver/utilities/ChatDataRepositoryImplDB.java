@@ -8,6 +8,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import java.sql.*;
 import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 
 
 /**
@@ -22,8 +23,8 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
     private static final String EMPTY_STRING = "";
 
     private static final String SQL_GET_CONVERSATIONS_FOR_USER =
-            "SELECT c.conversation_id, c.date_started, c.cp.participant_id, c.conversation_name FROM " +
-            "conversations c, conversation_participants cp WHERE cp.user_id = null AND cp.conversation_id = c.conversation_id;";
+            "SELECT c.conversation_id, c.date_started, cp.participant_id, c.conversation_name FROM " +
+            "conversations c, conversation_participants cp WHERE cp.user_id = ? AND cp.conversation_id = c.conversation_id;";
     private static final String FIRST_NAME_MARKER = "¬1";
     private static final String LAST_NAME_MARKER = "¬2";
     private static final String SQL_GET_USER_IDS_FOR_FULL_NAMES = "SELECT user_id, first_name, last_name FROM users WHERE first_name IN (" + FIRST_NAME_MARKER + ") AND last_name IN (" + LAST_NAME_MARKER + ")";
@@ -32,17 +33,17 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
     private static final String SQL_GET_CONV_PARTICIPANT_DETAILS = "select u.first_name, u.last_name, cp.participant_id FROM users u, conversation_participants cp" +
             " WHERE cp.conversation_id = ? AND cp.user_id = u.user_id";
     private static final String SQL_GET_DRAFTED_MSG_FOR_USER = "SELECT d.msg_text FROM drafted_messages d WHERE d.participant_id = ?";
-    private static final String SQL_GET_USER = "SELECT id, age, last_name, first_name, username, password FROM users u WHERE u.first_name = ? AND u.last_name = ?)";
-    private static final String SQL_GET_USER_IDS_IN_CONVERSATION_FOR_PARTICIPANT_ID = "SELECT user_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.conversation_participant_id = ?)";
-    private static final String SQL_GET_CONVERSATION_DETAILS_FOR_PARTICIPANT_ID = "SELECT conversation_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.conversation_participant_id = ?)";
+    private static final String SQL_GET_USER_IDS_IN_CONVERSATION_FOR_PARTICIPANT_ID = "SELECT user_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
+    private static final String SQL_GET_CONVERSATION_DETAILS_FOR_PARTICIPANT_ID = "SELECT conversation_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
     private static final String SQL_ADD_NEW_MESSAGE = "INSERT INTO messages (message_id, date_sent, participant_id, message_text) VALUES (?,?,?,?)";
+    private static final String SQL_ADD_NEW_USER = "INSERT INTO users(user_id, age, first_name, last_name, username, password) VALUES (?, ?, ?, ?, ?, ?)";
     private static final String SQL_ADD_CONVERSATION_PARTICIPANTS = "INSERT INTO conversation_participants (conversation_id, user_id, participant_id) VALUES (?,?,?)";
-    private static final String SQL_ADD_NEW_CONVERSATION = "INSERT INTO conversation (conversation_id,conversation_name,date_started) VALUES (?, ?, ?)";
+    private static final String SQL_ADD_NEW_CONVERSATION = "INSERT INTO conversations (conversation_id,conversation_name,date_started) VALUES (?, ?, ?)";
     private static final String SQL_REMOVE_PARTICIPANT_FROM_CONV = "DELETE FROM conversation_participants WHERE participant_id = ?";
     private static final String SQL_REMOVE_PARTICIPANTS_FROM_CONVERSATION = "DELETE FROM conversation_participants WHERE conversation_id = ?";
-    private static final String SQL_REMOVE_MESSAGES_FOR_CONVERSATION = "DELETE FROM messages m, conversation c WHERE c.conversation_id = ? AND c.participant_id = m.participant_id";
+    private static final String SQL_REMOVE_MESSAGES_FOR_CONVERSATION = "DELETE FROM messages m, conversations c WHERE c.conversation_id = ? AND c.participant_id = m.participant_id";
     private static final String SQL_REMOVE_CONVERSATION = "DELETE FROM conversations c WHERE c.conversation_id = ?";
-    private static final String SQL_CHECK_LOGIN_DETAILS = "SELECT user_id FROM user WHERE username = ? and password = ?";
+    private static final String SQL_CHECK_LOGIN_DETAILS = "SELECT user_id FROM users WHERE username = ? and password = ?";
 
     private HikariDataSource CONNECTION_POOL;
 
@@ -56,7 +57,7 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
     }
 
     private ChatDataRepositoryImplDB() {
-        var dbConfig = System.getenv().get("DB_CONFIG");
+        var dbConfig = System.getProperty("DB_CONFIG");
         if(dbConfig == null) {
             throw new IllegalStateException("No value set for env var 'DB_CONFIG'.  Cannot set up db connections");
         }
@@ -66,7 +67,7 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
             hikariConfig.setJdbcUrl(settings[0]);
             hikariConfig.setUsername(settings[1]);
             hikariConfig.setPassword(settings[2]);
-            hikariConfig.setMaximumPoolSize(3);
+            hikariConfig.setMaximumPoolSize(Integer.parseInt(settings[3]));
             CONNECTION_POOL = new HikariDataSource( hikariConfig );
         }
         catch(Exception e) {
@@ -76,82 +77,64 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
 
     @Override
     public Conversations getConversationsForUser(UUID userId) throws SQLException {
-        var sql = SQL_GET_CONVERSATIONS_FOR_USER.replace("?", userId.toString());
-        List<Conversation> conversationList = new ArrayList<>();
         var connection = CONNECTION_POOL.getConnection();
-        try(var statement1 = connection.createStatement();
-            var rsConversations = statement1.executeQuery(sql)) {
+        try(var preparedStatement = connection.prepareStatement(SQL_GET_CONVERSATIONS_FOR_USER)) {
+            preparedStatement.setObject(1, userId);
+            List<Conversation> conversationList = new ArrayList<>();
+            try (var rsConversations = preparedStatement.executeQuery()) {
 
-            while(rsConversations.next()) {
-                var conversationId = rsConversations.getObject(1);
-                var participantId = rsConversations.getObject(3);
-                var name = rsConversations.getString(4);
+                while (rsConversations.next()) {
+                    var conversationId = rsConversations.getObject(1);
+                    var participantId = rsConversations.getObject(3);
+                    var name = rsConversations.getString(4);
 
-                var messagesInConversation = new ArrayList<Message>();
-                var participantsInConversation = new ArrayList<ConversationParticipant>();
-                var draftedMessage = EMPTY_STRING;
+                    var messagesInConversation = new ArrayList<Message>();
+                    var participantsInConversation = new ArrayList<ConversationParticipant>();
+                    var draftedMessage = EMPTY_STRING;
 
-                try(var preparedStatement1 = connection.prepareStatement(SQL_GET_MESSAGES_IN_CONVERSATION);
-                    var preparedStatement2 = connection.prepareStatement(SQL_GET_CONV_PARTICIPANT_DETAILS);
-                    var preparedStatement3 = connection.prepareStatement(SQL_GET_DRAFTED_MSG_FOR_USER)) {
-                    preparedStatement1.setObject(1, conversationId);
-                    preparedStatement2.setObject(1, conversationId);
-                    preparedStatement3.setObject(1, participantId);
+                    try (var preparedStatement1 = connection.prepareStatement(SQL_GET_MESSAGES_IN_CONVERSATION);
+                         var preparedStatement2 = connection.prepareStatement(SQL_GET_CONV_PARTICIPANT_DETAILS);
+                         var preparedStatement3 = connection.prepareStatement(SQL_GET_DRAFTED_MSG_FOR_USER)) {
+                        preparedStatement1.setObject(1, conversationId);
+                        preparedStatement2.setObject(1, conversationId);
+                        preparedStatement3.setObject(1, participantId);
 
-                    try(var messagesRs = preparedStatement1.executeQuery();
-                        var participantsRs = preparedStatement2.executeQuery();
-                        var draftedMessageRs = preparedStatement3.executeQuery()) {
+                        try (var messagesRs = preparedStatement1.executeQuery();
+                             var participantsRs = preparedStatement2.executeQuery();
+                             var draftedMessageRs = preparedStatement3.executeQuery()) {
 
-                        while (messagesRs.next()) {
-                            var message = new Message(messagesRs.getString(1), messagesRs.getTimestamp(2).getTime(), (UUID) messagesRs.getObject(3));
-                            messagesInConversation.add(message);
-                        }
+                            while (messagesRs.next()) {
+                                var message = new Message(messagesRs.getString(1), messagesRs.getTimestamp(2).getTime(), (UUID) messagesRs.getObject(3));
+                                messagesInConversation.add(message);
+                            }
 
-                        while(participantsRs.next()) {
-                            var conversationParticipant = new ConversationParticipant(participantsRs.getString(1), participantsRs.getString(2), (UUID)participantsRs.getObject(3));
-                            participantsInConversation.add(conversationParticipant);
-                        }
+                            while (participantsRs.next()) {
+                                var conversationParticipant = new ConversationParticipant(participantsRs.getString(1), participantsRs.getString(2), (UUID) participantsRs.getObject(3));
+                                participantsInConversation.add(conversationParticipant);
+                            }
 
-                        if(draftedMessageRs.next()) {
-                            draftedMessage = draftedMessageRs.getString(1);
-                            if(draftedMessageRs.next()) {
-                                throw new IllegalStateException(">1 drafted message found for conversation '" + conversationId + "' with name '" + name + "' for participant '" + participantId + "'");
+                            if (draftedMessageRs.next()) {
+                                draftedMessage = draftedMessageRs.getString(1);
+                                if (draftedMessageRs.next()) {
+                                    throw new IllegalStateException(">1 drafted message found for conversation '" + conversationId + "' with name '" + name + "' for participant '" + participantId + "'");
+                                }
                             }
                         }
                     }
+
+                    var dateStarted = rsConversations.getTimestamp(2).getTime();
+
+                    var conversationObject = new Conversation(
+                            (UUID) conversationId,
+                            dateStarted,
+                            participantsInConversation.toArray(new ConversationParticipant[0]),
+                            messagesInConversation.toArray(new Message[0]),
+                            draftedMessage,
+                            name);
+                    conversationList.add(conversationObject);
                 }
-
-                var dateStarted = rsConversations.getTimestamp(2).getTime();
-
-                var conversationObject = new Conversation(
-                        (UUID)conversationId,
-                        dateStarted,
-                        participantsInConversation.toArray(new ConversationParticipant[0]),
-                        messagesInConversation.toArray(new Message[0]),
-                        draftedMessage,
-                        name);
-                conversationList.add(conversationObject);
             }
-        }
-        return new Conversations(conversationList.toArray(new Conversation[0]));
-    }
-
-    @Override
-    public User getUser(String firstName, String lastName) throws Exception {
-
-        try(var preparedStatement = CONNECTION_POOL.getConnection().prepareStatement(SQL_GET_USER)) {
-            preparedStatement.setString(1 ,firstName);
-            preparedStatement.setString(2, lastName);
-            try (var rs = preparedStatement.executeQuery()) {
-                if (rs.next()) {
-                    var user = new User((UUID) rs.getObject(1), rs.getString(2), rs.getString(3));
-                    if (rs.next()) {
-                        throw new IllegalStateException(">1 user found for firstName='" + firstName + "' lastName='" + lastName + "'");
-                    }
-                    return user;
-                }
-                return null;
-            }
+            return new Conversations(conversationList.toArray(new Conversation[0]));
         }
     }
 
@@ -369,5 +352,23 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
             }
         }
         return resultsList;
+    }
+
+    @Override
+    public void addNewUser(User newUser, String password) throws Exception {
+
+        try(var preparedStatement = CONNECTION_POOL.getConnection().prepareStatement(SQL_ADD_NEW_USER)) {
+            preparedStatement.setObject(1, newUser.id());
+            preparedStatement.setInt(2, newUser.age());
+            preparedStatement.setObject(3, newUser.firstName());
+            preparedStatement.setString(4, newUser.lastName());
+            preparedStatement.setString(5, newUser.username());
+            preparedStatement.setString(6, password);
+            var updateCount = preparedStatement.executeUpdate();
+            if(updateCount != 1) {
+                throw new IllegalStateException("Adding new user: " + newUser.username() + " resulted in " + updateCount + " updates");
+            }
+        }
+
     }
 }

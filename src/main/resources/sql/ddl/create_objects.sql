@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS public.users
     last_name character varying(50) COLLATE pg_catalog."default" NOT NULL,
     username character varying(10) COLLATE pg_catalog."default" NOT NULL,
     password character varying(20) COLLATE pg_catalog."default" NOT NULL,
-    CONSTRAINT users_pkey PRIMARY KEY (user_id)
+    CONSTRAINT users_pkey PRIMARY KEY (user_id),
+    UNIQUE (first_name, last_name)
 )
 
 TABLESPACE pg_default;

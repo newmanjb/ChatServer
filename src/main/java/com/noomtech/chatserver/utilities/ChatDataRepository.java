@@ -11,8 +11,6 @@ public interface ChatDataRepository extends AutoCloseable {
 
     Conversations getConversationsForUser(UUID userId) throws Exception;
 
-    User getUser(String firstName, String lastName) throws Exception;
-
     ConversationServerOnly addNewConversation(String conversationName, String[] participantFirstNames, String[] participantLastNames) throws Exception;
 
     void addNewMessage(Message message) throws Exception;
@@ -22,6 +20,8 @@ public interface ChatDataRepository extends AutoCloseable {
     boolean removeParticipantFromConversation(UUID participantId) throws Exception;
 
     UUID checkLogin(String uName, String pwd) throws Exception;
+
+    void addNewUser(User newUser, String password) throws Exception;
 
     void close();
 }

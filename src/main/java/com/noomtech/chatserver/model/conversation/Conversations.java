@@ -1,6 +1,11 @@
 package com.noomtech.chatserver.model.conversation;
 
-public record Conversations(Conversation[] converversations) {
+import java.util.Arrays;
 
+public record Conversations(Conversation[] conversations) {
 
+    @Override
+    public String toString() {
+        return Arrays.toString(conversations);
+    }
 }
