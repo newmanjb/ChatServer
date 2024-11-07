@@ -107,7 +107,7 @@ public class WebSocketHandler extends TextWebSocketHandler {
                         }
                         case "UserPostedInConversationNotification": {
                             var userPostedObject = convertToObject(payloadString, UserPostedInConversationNotification.class);
-                            var newMessage = new Message(userPostedObject.text(), userPostedObject.when(), userPostedObject.participantId());
+                            var newMessage = new Message(userPostedObject.text(), userPostedObject.when(), UUID.randomUUID(),  userPostedObject.participantId());
                             chatDataRepository.addNewMessage(newMessage);
                             var usersInConversation = chatDataRepository.getUserIdsInConversationForParticipantId(userPostedObject.participantId());
                             sendToUsers(new TextMessage("{\"type\":\"ConversationUpdate\", \"updateType\":\"" + CONVERSATION_UPDATE_TYPES.MESSAGE_POSTED +

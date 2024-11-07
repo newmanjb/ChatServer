@@ -24,24 +24,26 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
 
     private static final String SQL_GET_CONVERSATIONS_FOR_USER =
             "SELECT c.conversation_id, c.date_started, cp.participant_id, c.conversation_name FROM " +
-            "conversations c, conversation_participants cp WHERE cp.user_id = ? AND cp.conversation_id = c.conversation_id;";
+            "conversations c, conversation_participants cp WHERE cp.date_left IS NULL AND cp.user_id = ? AND cp.conversation_id = c.conversation_id;";
     private static final String FIRST_NAME_MARKER = "¬1";
     private static final String LAST_NAME_MARKER = "¬2";
     private static final String SQL_GET_USER_IDS_FOR_FULL_NAMES = "SELECT user_id, first_name, last_name FROM users WHERE first_name IN (" + FIRST_NAME_MARKER + ") AND last_name IN (" + LAST_NAME_MARKER + ")";
-    private static final String SQL_GET_MESSAGES_IN_CONVERSATION = "SELECT m.msg_text, m.date_sent, m.participant_id FROM messages m, conversation_participants cp " +
+    private static final String SQL_GET_MESSAGES_IN_CONVERSATION = "SELECT m.msg_text, m.date_sent, m.participant_id, m.message_id FROM messages m, conversation_participants cp " +
             "WHERE m.participant_id = cp.participant_id AND cp.conversation_id = ? ORDER BY m.date_sent DESC";
     private static final String SQL_GET_CONV_PARTICIPANT_DETAILS = "select u.first_name, u.last_name, cp.participant_id FROM users u, conversation_participants cp" +
             " WHERE cp.conversation_id = ? AND cp.user_id = u.user_id";
     private static final String SQL_GET_DRAFTED_MSG_FOR_USER = "SELECT d.msg_text FROM drafted_messages d WHERE d.participant_id = ?";
-    private static final String SQL_GET_USER_IDS_IN_CONVERSATION_FOR_PARTICIPANT_ID = "SELECT user_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
-    private static final String SQL_GET_CONVERSATION_DETAILS_FOR_PARTICIPANT_ID = "SELECT conversation_id FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
-    private static final String SQL_ADD_NEW_MESSAGE = "INSERT INTO messages (message_id, date_sent, participant_id, message_text) VALUES (?,?,?,?)";
+    private static final String SQL_GET_USER_IDS_IN_CONVERSATION_FOR_PARTICIPANT_ID =
+            "SELECT user_id FROM conversation_participants cp1 WHERE cp1.date_left IS NULL AND " +
+            "cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
+    private static final String SQL_GET_CONVERSATION_DETAILS_FOR_PARTICIPANT_ID = "SELECT conversation_id, date_left FROM conversation_participants cp1 WHERE cp1.conversation_id = (SELECT conversation_id FROM conversation_participants cp2 WHERE cp2.participant_id = ?)";
+    private static final String SQL_ADD_NEW_MESSAGE = "INSERT INTO messages (message_id, date_sent, participant_id, msg_text) VALUES (?,?,?,?)";
     private static final String SQL_ADD_NEW_USER = "INSERT INTO users(user_id, age, first_name, last_name, username, password) VALUES (?, ?, ?, ?, ?, ?)";
     private static final String SQL_ADD_CONVERSATION_PARTICIPANTS = "INSERT INTO conversation_participants (conversation_id, user_id, participant_id) VALUES (?,?,?)";
     private static final String SQL_ADD_NEW_CONVERSATION = "INSERT INTO conversations (conversation_id,conversation_name,date_started) VALUES (?, ?, ?)";
-    private static final String SQL_REMOVE_PARTICIPANT_FROM_CONV = "DELETE FROM conversation_participants WHERE participant_id = ?";
+    private static final String SQL_REMOVE_PARTICIPANT_FROM_CONV = "UPDATE conversation_participants SET date_left = now() WHERE participant_id = ?";
     private static final String SQL_REMOVE_PARTICIPANTS_FROM_CONVERSATION = "DELETE FROM conversation_participants WHERE conversation_id = ?";
-    private static final String SQL_REMOVE_MESSAGES_FOR_CONVERSATION = "DELETE FROM messages m, conversations c WHERE c.conversation_id = ? AND c.participant_id = m.participant_id";
+    private static final String SQL_REMOVE_MESSAGES_FOR_CONVERSATION = "DELETE FROM messages m WHERE m.participant_id IN (SELECT participant_id FROM conversation_participants cp1 WHERE cp1.conversation_id = ?)";
     private static final String SQL_REMOVE_CONVERSATION = "DELETE FROM conversations c WHERE c.conversation_id = ?";
     private static final String SQL_CHECK_LOGIN_DETAILS = "SELECT user_id FROM users WHERE username = ? and password = ?";
 
@@ -104,7 +106,7 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
                              var draftedMessageRs = preparedStatement3.executeQuery()) {
 
                             while (messagesRs.next()) {
-                                var message = new Message(messagesRs.getString(1), messagesRs.getTimestamp(2).getTime(), (UUID) messagesRs.getObject(3));
+                                var message = new Message(messagesRs.getString(1), messagesRs.getTimestamp(2).getTime(), (UUID)messagesRs.getObject(4), (UUID) messagesRs.getObject(3));
                                 messagesInConversation.add(message);
                             }
 
@@ -190,7 +192,7 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
     public void addNewMessage(Message newMessage) throws Exception {
 
         try(var preparedStatement = CONNECTION_POOL.getConnection().prepareStatement(SQL_ADD_NEW_MESSAGE)) {
-            preparedStatement.setObject(1, UUID.randomUUID());
+            preparedStatement.setObject(1, newMessage.messageID());
             preparedStatement.setTimestamp(2, new Timestamp(newMessage.timeSent()));
             preparedStatement.setObject(3, newMessage.participantId());
             preparedStatement.setString(4, newMessage.text());
@@ -233,7 +235,9 @@ public class ChatDataRepositoryImplDB implements ChatDataRepository {
                 int numParticipantsInConversations = 0;
                 UUID conversationId = null;
                 while (rs.next()) {
-                    numParticipantsInConversations++;
+                    if (rs.getObject(2) == null) {
+                        numParticipantsInConversations++;
+                    }
                     conversationId = (UUID) rs.getObject(1);
                 }
                 if (numParticipantsInConversations > 1) {

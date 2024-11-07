@@ -71,10 +71,12 @@
 			<version>5.1.0</version>
 		</dependency>
 
+		<!-- https://mvnrepository.com/artifact/org.junit/junit-bom -->
 		<dependency>
-			<groupId>org.junit.jupiter</groupId>
-			<artifactId>junit-jupiter-api</artifactId>
-			<version>5.8.0</version>
+			<groupId>org.junit</groupId>
+			<artifactId>junit-bom</artifactId>
+			<version>5.11.3</version>
+			<type>pom</type>
 			<scope>test</scope>
 		</dependency>
 
