@@ -1,8 +1,11 @@
 package com.noomtech.chatserver.handler;
 
 import com.google.gson.Gson;
+import com.noomtech.chatserver.model.conversation.Conversation;
+import com.noomtech.chatserver.model.conversation.ConversationParticipant;
+import com.noomtech.chatserver.model.conversation.ConversationParticipantServerOnly;
+import com.noomtech.chatserver.model.conversation.Message;
 import com.noomtech.chatserver.model.inboundonly.*;
-import com.noomtech.chatserver.model.conversation.*;
 import com.noomtech.chatserver.utilities.ChatDataRepository;
 import com.noomtech.chatserver.utilities.ChatDataRepositoryImplDB;
 import org.springframework.web.socket.TextMessage;
@@ -13,9 +16,9 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
-import java.util.UUID;
 
 
 /**
@@ -63,18 +66,26 @@ public class WebSocketHandler extends TextWebSocketHandler {
             // "{"type":"LoginRequest","from":"52jh3erw0fejue90","payload":{}"
             var messageString = message.getPayload();
             System.out.println("Received: " + messageString);
-            //Get the type, who it's from, and the payload
-            int firstQuoteIndex = messageString.indexOf("\"");
-            int secondQuoteIndex = messageString.substring(firstQuoteIndex + 1).indexOf(QUOTE);
-            var type = messageString.substring(firstQuoteIndex + 1, secondQuoteIndex);
-            int thirdQuoteIndex = messageString.substring(secondQuoteIndex + 1).indexOf(QUOTE);
-            int fourthQuoteIndex = messageString.substring(thirdQuoteIndex + 1).indexOf(QUOTE);
-            var fromString = messageString.substring(thirdQuoteIndex + 1, fourthQuoteIndex);
-            var from = UUID.fromString(fromString);
-            int colonIndexBeforePayload = messageString.substring(fourthQuoteIndex + 1).indexOf(COLON);
-            final String payloadString = messageString.substring(colonIndexBeforePayload + 1, messageString.length() - 1).replaceAll(REPLACE_ESCAPED_QUOTES, QUOTE);
+            messageString = messageString.substring(1, messageString.length() - 1).replaceAll(REPLACE_ESCAPED_QUOTES, QUOTE);
+
+            int ctr = 0;
+            var results = new String[3];
+            String tempString = messageString;
+            do {
+                tempString = tempString.substring(tempString.indexOf(COLON) + 2);
+                results[ctr] = tempString.substring(0, ctr < 2 ? tempString.indexOf(QUOTE) : tempString.length() - 1);
+                ctr++;
+            }
+            while(ctr < results.length);
+
+            var type = results[0];
+            var fromString = results[1];
+            //Add the "{" because the routine above assumes that each colon is followed by a " character and so moves ahead of it when creating the substring
+            var payloadString = "{" + results[2];
 
             if(!type.equals("LoginRequest")) {
+
+                var from = UUID.fromString(fromString);
 
                 if(!sessions.containsKey(from)) {
                     System.out.println("Session " + session.getUri() + " for user: " + fromString + " has not logged in");
